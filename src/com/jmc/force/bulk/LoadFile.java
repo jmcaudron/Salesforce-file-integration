@@ -1,19 +1,43 @@
 package com.jmc.force.bulk;
 
 
-import java.io.*;
-import java.util.*;
+import java.io.BufferedReader;
+import java.io.BufferedWriter;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.FileWriter;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.util.ArrayList;
+//import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+//import java.util.Map;
+import java.util.Set;
 
 import org.apache.log4j.Logger;
 import org.apache.log4j.PropertyConfigurator;
 
 import com.jmc.force.login.loginUtil;
-import com.sforce.async.*;
 
-import com.jmc.param.ParamManagement;
-import com.jmc.param.ParamManagement.importConfig;
-import com.jmc.param.ParamManagement.parameters;
+//import com.jmc.param.ParamManagement;
+//import com.jmc.param.ParamManagement.importConfig;
 
+//import com.jmc.param.ParamManagement;
+//import com.jmc.param.ParamManagement.importConfig;
+//import com.jmc.param.ParamManagement.parameters;
+import com.sforce.async.AsyncApiException;
+import com.sforce.async.BatchInfo;
+import com.sforce.async.BatchStateEnum;
+import com.sforce.async.BulkConnection;
+//import com.sforce.async.CSVReader;
+import com.sforce.async.ConcurrencyMode;
+import com.sforce.async.ContentType;
+import com.sforce.async.JobInfo;
+import com.sforce.async.JobStateEnum;
+import com.sforce.async.OperationEnum;
    
 public class LoadFile {
 
@@ -34,13 +58,15 @@ public class LoadFile {
      */
     public void runFromConfig()
             throws Exception {
+    	//String outputDirectory;
+    	 	
     	logger.info("Start");
     	//System.setProperty( "file.encoding", "UTF-8" );
 
     	logger.info("Load Job");
     	
-    	ParamManagement pm = new ParamManagement("conf/jobsLoad.json"); 
-    	parameters params = pm.params;
+    	com.jmc.param.ParamManagement pm = new com.jmc.param.ParamManagement("conf/jobsLoad.json"); 
+    	//parameters paramlst = pm.params;
     	
     	//ObjectMapper mapper = new ObjectMapper();
     	//mapper.writeValue(new File("params.json"), pm.params);
@@ -52,18 +78,27 @@ public class LoadFile {
     	logger.info("Connect Salesforce");
     	loginUtil lu = new loginUtil();
     	BulkConnection connection = lu.getBulkConnection("");
+    	//outputDirectory=lu.getOutputDirectory();
         logger.info("connection:"+ connection.getConfig().getSessionId());
         logger.info("restEndpoint : 		"  +connection.getConfig().getRestEndpoint());
-        for (importConfig ic : params.importConfigs) {
-
-            JobInfo job = createJob(ic.object,ic.operation,ic.externalId, connection);
-            if (ic.specFile != "")
+        for (com.jmc.param.ParamManagement.importConfig ic : pm.params.importConfigs) {
+        	JobInfo job = createJob(ic.object,ic.operation,ic.externalId,ic.mode,ic.contentType, connection);
+            List<BatchInfo> batchInfoList;
+            boolean withHeader;
+            
+            withHeader = true;
+            if (ic.operation != com.sforce.async.OperationEnum.query ||ic.operation != com.sforce.async.OperationEnum.queryAll) {
+            	withHeader = false;
+            }
+ 
+        	if (ic.specFile != "")
             	addSpec(connection, job, ic.specFile);
-            List<BatchInfo> batchInfoList = createBatchesFromCSVFile(connection, job,ic.dataFile);
+
+            	batchInfoList = createBatchesFromCSVFile(connection, job,ic.dataFile,pm.params.maxRowsPerBatch,pm.params.maxBytesPerBatch, withHeader);
 
             closeJob(connection, job.getId());
             awaitCompletion(connection, job, batchInfoList);
-            checkResults(connection, job, batchInfoList);
+            checkResults(connection, job, batchInfoList,ic.dataFile );
         }
         logger.info("end");
 
@@ -74,17 +109,86 @@ public class LoadFile {
      * Gets the results of the operation and checks for errors.
      */
     private void checkResults(BulkConnection connection, JobInfo job,
-              List<BatchInfo> batchInfoList)
+              List<BatchInfo> batchInfoList, String inputFileName)
             throws AsyncApiException, IOException {
         // batchInfoList was populated when batches were created and submitted
-        for (BatchInfo b : batchInfoList) {
-            CSVReader rdr =
+    	job = connection.getJobStatus(job.getId());
+    	logger.info("Job STATUS:"+ job.getNumberRecordsFailed()+"/"+ job.getNumberRecordsProcessed()+" in "+ job.getTotalProcessingTime());
+    	logger.debug("Job STATUS:"+job);
+  
+		File outFile ;
+		FileWriter frOut ;
+		BufferedWriter brOut ;
+
+		if (job.getOperation()==OperationEnum.query || job.getOperation()==OperationEnum.queryAll) {
+			for (BatchInfo bi : batchInfoList) {
+				outFile = new File("log/"+job.getObject()+"-"+job.getId()+ bi.getId()+".csv");
+				frOut = new FileWriter(outFile);
+				brOut  = new BufferedWriter(frOut);
+				
+				String[] queryResults = null;
+				queryResults = connection.getQueryResultList(job.getId(), bi.getId()).getResult(); 
+				for (String resultId : queryResults) {
+					logger.info("resultId:"+resultId);
+					InputStream inResult =connection.getQueryResultStream(job.getId(), bi.getId(),resultId);
+					BufferedReader bfrResult = new BufferedReader(new InputStreamReader(inResult, "UTF8"));
+					String nextLineResult;       
+		            while ( (nextLineResult = bfrResult.readLine()) != null) {
+		            	 brOut.write(nextLineResult+"\n");
+		            }
+		            bfrResult.close();
+				}
+
+	            brOut.close();
+				
+			}
+			
+		}
+		else {
+			outFile = new File("log/"+job.getObject()+"-"+job.getId()+".csv");
+			frOut = new FileWriter(outFile);
+			brOut  = new BufferedWriter(frOut);
+		
+	    	for (BatchInfo b : batchInfoList) {
+	        	   
+	             InputStream inInput =new FileInputStream(inputFileName);
+	             //InputStream inInput =connection.getBatchRequestInputStream(job.getId(), b.getId());
+	             InputStream inResult =connection.getBatchResultStream(job.getId(), b.getId());
+	             
+	             BufferedReader bfrInput = new BufferedReader(new InputStreamReader(inInput, "UTF8"));
+	             BufferedReader bfrResult = new BufferedReader(new InputStreamReader(inResult, "UTF8"));
+	
+	             
+	             String nextLineInput;
+	             String nextLineResult;       
+	             while (((nextLineInput = bfrInput.readLine()) != null) && ((nextLineResult = bfrResult.readLine()) != null)) {
+	            	 brOut.write(nextLineInput+","+nextLineResult+"\n");
+	             }
+	             bfrInput.close();
+	             bfrResult.close();
+	             
+	    	}
+	        brOut.close();
+		}
+            
+        	/*
+        	CSVReader rdrInput =
+                    new CSVReader(connection.getBatchRequestInputStream(job.getId(), b.getId()));
+        	CSVReader rdrResult =
               new CSVReader(connection.getBatchResultStream(job.getId(), b.getId()));
-            List<String> resultHeader = rdr.nextRecord();
+        	
+            List<String> resultHeader = rdrResult.nextRecord();
+            List<String> inputHeader = rdrInput.nextRecord();
+            List<String> logHeader = inputHeader;
+            logHeader.addAll(resultHeader);
+            
+            
             int resultCols = resultHeader.size();
+            int inputCols = resultHeader.size();
+            
             logger.debug("resultHeader ="+resultHeader.toString());
             List<String> row;
-            while ((row = rdr.nextRecord()) != null) {
+            while ((row = rdrResult.nextRecord()) != null) {
             	logger.debug("row ="+row.toString());
                 Map<String, String> resultInfo = new HashMap<String, String>();
                 
@@ -102,8 +206,9 @@ public class LoadFile {
                 } else {
                 	logger.error("Error detected : " + error);
                 }
-            }
-        }
+            }*/
+        
+    	
     }
 
 
@@ -149,11 +254,12 @@ public class LoadFile {
                 if (b.getState() == BatchStateEnum.Completed
                   || b.getState() == BatchStateEnum.Failed) {
                     if (incomplete.remove(b.getId())) {
-                    	logger.info("BATCH STATUS:\n" + b);
+                    	logger.info("BATCH STATUS:"+ b.getNumberRecordsFailed()+"/"+ b.getNumberRecordsProcessed()+" in "+ b.getTotalProcessingTime());
                     }
                 }
             }
         }
+        
     }
 
 
@@ -168,7 +274,7 @@ public class LoadFile {
      * @return The JobInfo for the new job.
      * @throws AsyncApiException
      */
-    private JobInfo createJob(String sobjectType,OperationEnum operation,String externalIdFieldName,  BulkConnection connection)
+    private JobInfo createJob(String sobjectType,OperationEnum operation,String externalIdFieldName,ConcurrencyMode mode,ContentType contentType,  BulkConnection connection)
           throws AsyncApiException {
         JobInfo jobr,job = new JobInfo();
         
@@ -176,10 +282,12 @@ public class LoadFile {
         
         job.setObject(sobjectType);
         job.setOperation(operation);
-        job.setContentType(ContentType.CSV);
-        job.setConcurrencyMode(ConcurrencyMode.Parallel);
-        job.setExternalIdFieldName(externalIdFieldName);
+        job.setContentType(contentType);
+        job.setConcurrencyMode(mode);
+        job.setExternalIdFieldName(externalIdFieldName); //Doesn't work
         jobr = connection.createJob(job);
+       
+
         
         //System.out.println(jobr);
         return jobr;
@@ -236,7 +344,7 @@ public class LoadFile {
      *            The source file for batch data
      */
     private List<BatchInfo> createBatchesFromCSVFile(BulkConnection connection,
-          JobInfo jobInfo, String csvFileName)
+          JobInfo jobInfo, String csvFileName,int maxRowsPerBatch, int maxBytesPerBatch, boolean withHeader )
             throws IOException, AsyncApiException {
     	logger.info("createBatchesFromCSVFile <"+csvFileName+">");
     	
@@ -245,15 +353,17 @@ public class LoadFile {
             new InputStreamReader(new FileInputStream(csvFileName))
         );
         // read the CSV header row
-        byte[] headerBytes = (rdr.readLine() + "\n").getBytes("UTF-8");
+        byte[] headerBytes ="".getBytes("UTF-8");
+        if (withHeader) 
+        	headerBytes= (rdr.readLine() + "\n").getBytes("UTF-8");
         int headerBytesLength = headerBytes.length;
         File tmpFile = File.createTempFile("bulkAPIInsertJMC", ".csv");
 
         // Split the CSV file into multiple batches
         try {
             FileOutputStream tmpOut = new FileOutputStream(tmpFile);
-            int maxBytesPerBatch = 10000000; // 10 million bytes per batch
-            int maxRowsPerBatch = 10000; // 10 thousand rows per batch
+            //int maxBytesPerBatch = 10000000; // 10 million bytes per batch
+            //int maxRowsPerBatch = 10000; // 10 thousand rows per batch
             int currentBytes = 0;
             int currentLines = 0;
             String nextLine;
@@ -268,7 +378,8 @@ public class LoadFile {
                 }
                 if (currentBytes == 0) {
                     tmpOut = new FileOutputStream(tmpFile);
-                    tmpOut.write(headerBytes);
+                    if (withHeader)
+                    	tmpOut.write(headerBytes);
                     currentBytes = headerBytesLength;
                     currentLines = 1;
                 }

@@ -1,4 +1,4 @@
-package fileIntegration;
+package com.jmc;
 
 //import com.sforce.soap.enterprise.Connector;
 //import com.sforce.soap.enterprise.EnterpriseConnection;

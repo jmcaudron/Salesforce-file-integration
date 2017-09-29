@@ -2,20 +2,19 @@
   <modelVersion>4.0.0</modelVersion>
   <groupId>com.integration</groupId>
   <artifactId>sforceFileIntegration</artifactId>
-  <version>0.0.2</version>
+  <version>0.0.4</version>
    <properties>
-    <force-wsc.version>38.0.4</force-wsc.version>
-    <force.partner.api.version>38.0.0</force.partner.api.version>
+    <force-wsc.version>41.0.0</force-wsc.version>
+    <force.partner.api.version>41.0.0</force.partner.api.version>
   </properties>
   <build>
+    <defaultGoal>install</defaultGoal>
+    <!-- sourceDirectory>src/java</sourceDirectory-->
     <sourceDirectory>src</sourceDirectory>
     <resources>
-      <resource>
-        <directory>lib</directory>
-        <excludes>
-          <exclude>**/*.java</exclude>
-        </excludes>
-      </resource>
+         <resource>
+            <directory>src/resources</directory>
+        </resource>
     </resources>
     <plugins>
       <plugin>

@@ -10,6 +10,8 @@ import org.codehaus.jackson.JsonParseException;
 import org.codehaus.jackson.map.JsonMappingException;
 import org.codehaus.jackson.map.ObjectMapper;
 
+import com.sforce.async.ConcurrencyMode;
+import com.sforce.async.ContentType;
 import com.sforce.async.OperationEnum;
 
 
@@ -20,6 +22,8 @@ public class ParamManagement {
 		public String specFile;
 		public OperationEnum operation;
 		public String externalId;
+		public ConcurrencyMode mode;
+		public ContentType contentType;
 		
 		public importConfig() {
 			this.dataFile="datafile";
@@ -27,12 +31,20 @@ public class ParamManagement {
 			this.specFile="specfile";
 			this.operation = OperationEnum.insert;
 			this.externalId = "Id";
+			this.mode=ConcurrencyMode.Parallel;
+			this.contentType = ContentType.CSV;
 		}	
 	}
 	
 	public static  class parameters  {
 		 public List<importConfig> importConfigs;
+		 public int maxRowsPerBatch;
+		 public int maxBytesPerBatch;
+		 public int maxRunningBatchesPerJob;
 		 public parameters() {
+			maxRowsPerBatch= 5000;
+			maxBytesPerBatch=10000000;
+			maxRunningBatchesPerJob=2;
 			importConfigs = new ArrayList<importConfig>();
 		}
 	}
